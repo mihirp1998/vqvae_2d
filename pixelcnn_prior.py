@@ -1,9 +1,12 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+import ipdb
+st = ipdb.set_trace
 import json
 from torchvision import transforms
 from torchvision.utils import save_image, make_grid
+from torchvision import transforms, datasets
 
 from modules import VectorQuantizedVAE, GatedPixelCNN
 from datasets import MiniImagenet
@@ -16,16 +19,15 @@ def train(data_loader, model, prior, optimizer, args, writer):
             images = images.to(args.device)
             latents = model.encode(images)
             latents = latents.detach()
-
         labels = labels.to(args.device)
+
         logits = prior(latents, labels)
         logits = logits.permute(0, 2, 3, 1).contiguous()
-
         optimizer.zero_grad()
         loss = F.cross_entropy(logits.view(-1, args.k),
                                latents.view(-1))
         loss.backward()
-
+        st()
         # Logs
         writer.add_scalar('loss/train', loss.item(), args.steps)
 
@@ -111,7 +113,7 @@ def main(args):
 
     # Save the label encoder
     with open('./models/{0}/labels.json'.format(args.output_folder), 'w') as f:
-        json.dump(train_dataset._label_encoder, f)
+        json.dump(train_dataset.classes, f)
 
     # Fixed images for Tensorboard
     fixed_images, _ = next(iter(test_loader))
@@ -125,7 +127,7 @@ def main(args):
     model.eval()
 
     prior = GatedPixelCNN(args.k, args.hidden_size_prior,
-        args.num_layers, n_classes=len(train_dataset._label_encoder)).to(args.device)
+        args.num_layers, n_classes=len(train_dataset.classes)).to(args.device)
     optimizer = torch.optim.Adam(prior.parameters(), lr=args.lr)
 
     best_loss = -1.

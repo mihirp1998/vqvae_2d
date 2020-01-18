@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions import kl_divergence
-
+import ipdb
+st = ipdb.set_trace
 from functions import vq, vq_st
 
 def to_scalar(arr):
@@ -245,7 +246,6 @@ class GatedPixelCNN(nn.Module):
             nn.ReLU(True),
             nn.Conv2d(512, input_dim, 1)
         )
-
         self.apply(weights_init)
 
     def forward(self, x, label):
@@ -256,8 +256,9 @@ class GatedPixelCNN(nn.Module):
         x_v, x_h = (x, x)
         for i, layer in enumerate(self.layers):
             x_v, x_h = layer(x_v, x_h, label)
-
-        return self.output_conv(x_h)
+        output = self.output_conv(x_h)
+        st()
+        return output
 
     def generate(self, label, shape=(8, 8), batch_size=64):
         param = next(self.parameters())
