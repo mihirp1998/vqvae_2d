@@ -72,6 +72,7 @@ class VQEmbedding(nn.Module):
     def __init__(self, K, D):
         super().__init__()
         self.embedding = nn.Embedding(K, D)
+        # st()
         self.embedding.weight.data.uniform_(-1./K, 1./K)
 
     def forward(self, z_e_x):

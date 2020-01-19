@@ -153,6 +153,7 @@ def main(args):
 
     # Generate the samples first once
     reconstruction = generate_samples(fixed_images, model, args)
+    # st()
     grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
     writer.add_image('reconstruction', grid, 0)
 
@@ -160,7 +161,7 @@ def main(args):
     for epoch in range(args.num_epochs):
         train(train_loader, model, optimizer, args, writer, epoch)
         loss, _ = test(valid_loader, model, args, writer)
-        reconstructiozn = generate_samples(fixed_images, model, args)
+        reconstruction = generate_samples(fixed_images, model, args)
         grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
 
         writer.add_image('reconstruction', grid, epoch + 1)
@@ -187,7 +188,7 @@ if __name__ == '__main__':
         help='name of the dataset (mnist, fashion-mnist, cifar10, miniimagenet)')
 
     # Latent space
-    parser.add_argument('--hidden-size', type=int, default=256,
+    parser.add_argument('--hidden-size', type=int, default=32,
         help='size of the latent vectors (default: 256)')
 
 
