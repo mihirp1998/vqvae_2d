@@ -17,7 +17,7 @@ class meshgrid_based_rotation:
         self.W = W
         self.centerD = self.D//2
         self.centerW = self.W//2
-        self.EPS = 1e-5
+        self.EPS = 1e-8
         self.device = torch.device("cuda")
         self.angleIncrement = angleIncrement
         # with torch.no_grad():
@@ -84,9 +84,23 @@ class meshgrid_based_rotation:
         y1, y2, x1, x2 = dfloor.unsqueeze(0).unsqueeze(0).to(torch.float64), dceil.unsqueeze(0).unsqueeze(0).to(torch.float64), wfloor.unsqueeze(0).unsqueeze(0).to(torch.float64), wceil.unsqueeze(0).unsqueeze(0).to(torch.float64)
         y = self.dRot.unsqueeze(0).unsqueeze(0).to(torch.float64) 
         x = self.wRot.unsqueeze(0).unsqueeze(0).to(torch.float64)
-        numerator = fq11*(x2-x)*(y2-y) + fq21*(x-x1)*(y2-y) + fq12*(x2-x)*(y-y1) + fq22*(x-x1)*(y-y1)
-        st()
-        denominator = (x2-x1)*(y2-y1) + self.EPS
+        one = (x2-x )*(y2-y)
+        two = (x-x1)*(y2-y)
+        three = (x2-x)*(y-y1)
+        four = (x-x1)*(y-y1)
+        one[torch.where(one == 0.0)] = 0.25
+        two[torch.where(two == 0.0)] = 0.25
+        three[torch.where(three == 0.0)] = 0.25
+        four[torch.where(four == 0.0)] = 0.25
+
+        # st()
+        # self.EPS = 0.0
+        numerator = fq11*one + fq21*two + fq12*three + fq22*four
+        # numerator = torch.clamp(numerator,min=self.EPS)
+        denominator = (x2-x1)*(y2-y1)
+        denominator[torch.where(denominator == 0.0)] = 1.0
+
+        # denominator =torch.clamp(denominator,min=self.EPS)
         out = numerator/denominator
         return out
 
@@ -97,8 +111,8 @@ class meshgrid_based_rotation:
         return out
 
     def getFloorAndCeil(self):
-        self.dRot = self.dRot + self.EPS
-        self.wRot = self.wRot + self.EPS
+        self.dRot = self.dRot 
+        self.wRot = self.wRot 
 
         dfloor = torch.floor(self.dRot).long()
         dceil = torch.ceil(self.dRot).long()
