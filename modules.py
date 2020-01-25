@@ -69,10 +69,11 @@ class VAE(nn.Module):
 
 
 class VQEmbedding(nn.Module):
-    def __init__(self, K, D):
+    def __init__(self, K, D,object_level):
         super().__init__()
         self.embedding = nn.Embedding(K, D)
         # st()
+        self.object_level = object_level
         self.embedding.weight.data.uniform_(-1./K, 1./K)
 
     def forward(self, z_e_x):
@@ -81,9 +82,13 @@ class VQEmbedding(nn.Module):
         return latents
 
     def straight_through(self, z_e_x):
-        z_e_x_ = z_e_x.permute(0, 2, 3, 1).contiguous()
-        z_q_x_, indices = vq_st(z_e_x_, self.embedding.weight.detach())
-        z_q_x = z_q_x_.permute(0, 3, 1, 2).contiguous()
+        if not self.object_level:
+            z_e_x_ = z_e_x.permute(0, 2, 3, 1).contiguous()
+            z_q_x_, indices = vq_st(z_e_x_, self.embedding.weight.detach())
+            z_q_x = z_q_x_.permute(0, 3, 1, 2).contiguous()
+        else:
+            z_q_x, indices = vq_st(z_e_x, self.embedding.weight.detach())
+
 
         z_q_x_bar_flatten = torch.index_select(self.embedding.weight,
             dim=0, index=indices)
@@ -110,7 +115,7 @@ class ResBlock(nn.Module):
 
 
 class VectorQuantizedVAE(nn.Module):
-    def __init__(self, input_dim, dim, K=512):
+    def __init__(self, input_dim, dim,object_level, K=512):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Conv2d(input_dim, dim, 4, 2, 1),
@@ -121,7 +126,7 @@ class VectorQuantizedVAE(nn.Module):
             ResBlock(dim),
         )
 
-        self.codebook = VQEmbedding(K, dim)
+        self.codebook = VQEmbedding(K, dim,object_level)
 
         self.decoder = nn.Sequential(
             ResBlock(dim),

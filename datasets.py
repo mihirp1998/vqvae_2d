@@ -130,7 +130,7 @@ class MiniImagenet(data.Dataset):
 
 
 class Clevr(data.Dataset):
-    def __init__(self, root, mod="temp", train=False, valid=False, test=False,
+    def __init__(self, root, mod="temp",object_level=False, train=False, valid=False, test=False,
                  transform=None, target_transform=None, download=False):
         super(Clevr, self).__init__()
         self.root = root
@@ -139,7 +139,7 @@ class Clevr(data.Dataset):
         self.target_transform = target_transform
         self.image_folder = os.path.join(os.path.expanduser(root), 'images')
         self._data = []
-        self.object_level = True
+        self.object_level = object_level
         
         if train:
             modfile = f"{self.mod_folder}/{mod}t.txt"
@@ -460,7 +460,7 @@ class Clevr(data.Dataset):
             xmin,ymin = torch.floor(lower).to(torch.int16)
             xmax,ymax = torch.ceil(upper).to(torch.int16)
             object_rgb = random_rgb[ymin:ymax,xmin:xmax]
-            # object_rgb = cv2.resize(object_rgb,(int(128),int(128)))
+            random_rgb = cv2.resize(object_rgb,(int(64),int(64)))
             # # imsave("new.png",object_rgb)
             # st()
             # print()

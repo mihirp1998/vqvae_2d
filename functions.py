@@ -1,5 +1,7 @@
 import torch
 from torch.autograd import Function
+import ipdb
+# st = ipdb.set_trace
 
 class VectorQuantization(Function):
     @staticmethod
@@ -7,6 +9,7 @@ class VectorQuantization(Function):
         with torch.no_grad():
             embedding_size = codebook.size(1)
             inputs_size = inputs.size()
+
             inputs_flatten = inputs.view(-1, embedding_size)
 
             codebook_sqr = torch.sum(codebook ** 2, dim=1)

@@ -16,7 +16,6 @@ def train(data_loader, model, optimizer, args, writer,epoch):
     for images, _ in data_loader:
         start_iter_time = time.time()
         images = images.to(args.device)
-
         optimizer.zero_grad()
 
         x_tilde, z_e_x, z_q_x = model(images)
@@ -111,11 +110,11 @@ def main(args):
 
         # Define the train, valid & test datasets
         train_dataset = Clevr(dataset_name,mod = args.modname\
-            , train=True, transform=transform)
+            , train=True, transform=transform,object_level= args.object_level)
         valid_dataset = Clevr(dataset_name,mod = args.modname,\
-         valid=True,transform=transform)
+         valid=True,transform=transform,object_level= args.object_level)
         test_dataset = Clevr(dataset_name,mod = args.modname,\
-         test=True, transform=transform)
+         test=True, transform=transform,object_level= args.object_level)
         num_channels = 3
     # elif args.dataset == 'miniimagenet':
     #     transform = transforms.Compose([
@@ -148,8 +147,15 @@ def main(args):
     fixed_grid = make_grid(fixed_images, nrow=8, range=(-1, 1), normalize=True)
     writer.add_image('original', fixed_grid, 0)
 
-    model = VectorQuantizedVAE(num_channels, args.hidden_size, args.k).to(args.device)
+    model = VectorQuantizedVAE(num_channels, args.hidden_size,args.object_level, args.k).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    st()
+    if args.load_model is not "":
+        with open(args.load_model, 'rb') as f:
+            state_dict = torch.load(f)
+            model.load_state_dict(state_dict)
+
 
     # Generate the samples first once
     reconstruction = generate_samples(fixed_images, model, args)
@@ -191,6 +197,11 @@ if __name__ == '__main__':
     parser.add_argument('--hidden-size', type=int, default=32,
         help='size of the latent vectors (default: 256)')
 
+    parser.add_argument('--load-model', type=str, default="",
+        help='name of the model to load')
+
+    parser.add_argument('--object-level', type=bool,default=False)
+
 
     parser.add_argument('--k', type=int, default=512,
         help='number of latent vectors (default: 512)')
@@ -204,7 +215,7 @@ if __name__ == '__main__':
         help='learning rate for Adam optimizer (default: 2e-4)')
     parser.add_argument('--beta', type=float, default=1.0,
         help='contribution of commitment loss, between 0.1 and 2.0 (default: 1.0)')
-
+    # 
     # Miscellaneous
     parser.add_argument('--output-folder', type=str, default='models/vqvae',
         help='name of the output folder (default: vqvae)')
@@ -224,6 +235,8 @@ if __name__ == '__main__':
     args.device = torch.device(args.device
         if torch.cuda.is_available() else 'cpu')
     # Slurm
+    if args.object_level:
+        args.hidden_size
     temp_folder = args.output_folder
     args.output_folder = f"{temp_folder}_K-{args.k}_mod-{args.modname}"
     # if 'SLURM_JOB_ID' in os.environ:
