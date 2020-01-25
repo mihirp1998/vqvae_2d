@@ -461,10 +461,6 @@ class Clevr(data.Dataset):
             xmax,ymax = torch.ceil(upper).to(torch.int16)
             object_rgb = random_rgb[ymin:ymax,xmin:xmax]
             random_rgb = cv2.resize(object_rgb,(int(64),int(64)))
-            # # imsave("new.png",object_rgb)
-            # st()
-            # print()
-
         # label = self._label_encoder[label]
         # tree_file = data['tree_seq_filename']
         # tree_file_path = f""
@@ -527,7 +523,12 @@ if __name__ == "__main__":
         # transforms.RandomResizedCrop(128),        
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])    
-    clevr = Clevr("/media/mihir/dataset/clevr_veggies/",mod="cg",train=True,transform=transform)
+    ]) 
+    import socket   
+    if "compute" in socket.gethostname():
+        root_dataset = "/projects/katefgroup/datasets/clevr_veggies/"
+    else:
+        root_dataset = "/media/mihir/dataset/clevr_veggies/"
+    clevr = Clevr(root_dataset,mod="cg",train=True,transform=transform,object_level= True)
     fixed_images, _ = next(iter(clevr))
     print("hello")

@@ -2,7 +2,7 @@ import torch
 from torch.autograd import Function
 #<<<<<<< HEAD
 import ipdb
-# st = ipdb.set_trace
+st = ipdb.set_trace
 #=======
 import cross_corr
 
@@ -12,54 +12,49 @@ mbr = cross_corr.meshgrid_based_rotation(16,16,16) # TODO: change '16' to actual
 class VectorQuantization(Function):
     
     @staticmethod
-    def forward(ctx, inputs, codebook):
+    def forward(ctx, inputs, codebook, object_level):
         '''
         TODO: Making following assumptions for rotation
         inputs is of size C x H x W
         '''
         
         with torch.no_grad():
-            embedding_size = codebook.size(1)
-            inputs_size = inputs.size()
-            #<<<<<<< HEAD
-
-	    #            inputs_flatten = inputs.view(-1, embedding_size)
-	    #=======
-            inputs_flatten = inputs.view(-1, embedding_size) # Seems like input has shape H,W,C. I am 
             # assuming C,H,W. So probably will need to fix that after shape validation
-
-            rotated_inputs = mbr.rotate2D(inputs.unsqueeze(0)).permute(0, 2, 1, 3, 4) #B,angles,C,H,W
-            #>>>>>>> dc4fab3cb9f342258faa7c388190a35e4a29eccd
-
             # This flatenning only makes sense when embedding_size is C*H*W. 
             # Otherwise we'll have to permute the rotated_inputs probably before flatenning.
-            rotated_inputs_flatten = rotated_inputs.view(-1, rotated_inputs.shape[1], embedding_size)
-            
             codebook_sqr = torch.sum(codebook ** 2, dim=1)
-            inputs_sqr = torch.sum(inputs_flatten ** 2, dim=1, keepdim=True)
-
-            rot_inputs_sqr = torch.sum(rotated_inputs_flatten ** 2, dim=2, keepdim=True)
-
-            # Compute the distances to the codebook
-            distances = torch.addmm(codebook_sqr + inputs_sqr,
-                inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
-            
-            # Compute the distances to the codebook
-            rot_distances = torch.addmm(codebook_sqr + rot_inputs_sqr,
-                rotated_inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
-
-            _, indices_flatten = torch.min(distances, dim=1)
-            indices = indices_flatten.view(*inputs_size[:-1])
-            ctx.mark_non_differentiable(indices)
-            
-            dB, dA, dF = rot_distances.shape
-            _, rot_indices_flatten = torch.min(rot_distances.view(dB, -1))
-            rot_indices = rot_indices_flatten%dF
-            rot_indices = rot_indices.view(*inputs_size[:-1])
-            ctx.mark_non_differentiable(rot_indices)
-
-            # return indices
-            return rot_indices
+            if object_level:
+                B,_,_,_ = list(inputs.shape)
+                inputs_flatten = inputs.reshape(B,-1)
+                inputs_size = inputs_flatten
+                if False:
+                    st()
+                    rotated_inputs = mbr.rotate2D(inputs.unsqueeze(0)).permute(0, 2, 1, 3, 4) #B,angles,C,H,W
+                    rotated_inputs_flatten = rotated_inputs.view(-1, rotated_inputs.shape[1], embedding_size)
+                    rot_inputs_sqr = torch.sum(rotated_inputs_flatten ** 2, dim=2, keepdim=True)
+                    rot_distances = torch.addmm(codebook_sqr + rot_inputs_sqr, rotated_inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
+                    dB, dA, dF = rot_distances.shape
+                    _, rot_indices_flatten = torch.min(rot_distances.view(dB, -1))
+                    rot_indices = rot_indices_flatten%dF
+                    rot_indices = rot_indices.view(*inputs_size[:-1])
+                    ctx.mark_non_differentiable(rot_indices)
+                    return rot_indices
+                else:
+                    inputs_sqr = torch.sum(inputs_flatten ** 2, dim=1, keepdim=True)
+                    distances = torch.addmm(codebook_sqr + inputs_sqr,inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
+                    _, indices_flatten = torch.min(distances, dim=1)
+                    ctx.mark_non_differentiable(indices_flatten)
+                    return indices_flatten
+            else:
+                    embedding_size = codebook.size(1)
+                    inputs_size = inputs.size()
+                    inputs_flatten = inputs.view(-1, embedding_size) # Seems like input has shape H,W,C. I am 
+                    inputs_sqr = torch.sum(inputs_flatten ** 2, dim=1, keepdim=True)
+                    distances = torch.addmm(codebook_sqr + inputs_sqr,inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
+                    _, indices_flatten = torch.min(distances, dim=1)
+                    indices = indices_flatten.view(*inputs_size[:-1])
+                    ctx.mark_non_differentiable(indices)
+                    return indices
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -70,16 +65,13 @@ class VectorQuantization(Function):
 
 class VectorQuantizationStraightThrough(Function):
     @staticmethod
-    def forward(ctx, inputs, codebook):
-        indices = vq(inputs, codebook)
+    def forward(ctx, inputs, codebook,object_level):
+        indices = vq(inputs, codebook,object_level)
         indices_flatten = indices.view(-1)
         ctx.save_for_backward(indices_flatten, codebook)
         ctx.mark_non_differentiable(indices_flatten)
-
-        codes_flatten = torch.index_select(codebook, dim=0,
-            index=indices_flatten)
+        codes_flatten = torch.index_select(codebook, dim=0,index=indices_flatten)
         codes = codes_flatten.view_as(inputs)
-
         return (codes, indices_flatten)
 
     @staticmethod

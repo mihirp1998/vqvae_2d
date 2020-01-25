@@ -17,9 +17,7 @@ def train(data_loader, model, optimizer, args, writer,epoch):
         start_iter_time = time.time()
         images = images.to(args.device)
         optimizer.zero_grad()
-
         x_tilde, z_e_x, z_q_x = model(images)
-
         # Reconstruction loss
         loss_recons = F.mse_loss(x_tilde, images)
         # Vector quantization objective
@@ -141,16 +139,14 @@ def main(args):
     test_loader = torch.utils.data.DataLoader(test_dataset,
         batch_size=16, shuffle=True)
     fixed_images, _ = next(iter(train_loader))
-
     # Fixed images for Tensorboard
     fixed_images, _ = next(iter(test_loader))
     fixed_grid = make_grid(fixed_images, nrow=8, range=(-1, 1), normalize=True)
     writer.add_image('original', fixed_grid, 0)
 
-    model = VectorQuantizedVAE(num_channels, args.hidden_size,args.object_level, args.k).to(args.device)
+    model = VectorQuantizedVAE(num_channels, args.hidden_size, args.object_level, args.k).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    st()
     if args.load_model is not "":
         with open(args.load_model, 'rb') as f:
             state_dict = torch.load(f)
@@ -235,8 +231,8 @@ if __name__ == '__main__':
     args.device = torch.device(args.device
         if torch.cuda.is_available() else 'cpu')
     # Slurm
-    if args.object_level:
-        args.hidden_size
+    # if args.object_level:
+    #     args.hidden_size
     temp_folder = args.output_folder
     args.output_folder = f"{temp_folder}_K-{args.k}_mod-{args.modname}"
     # if 'SLURM_JOB_ID' in os.environ:

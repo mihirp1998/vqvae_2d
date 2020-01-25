@@ -11,7 +11,7 @@ class meshgrid_based_rotation:
     the voxels in the batch and you don't want to compute the rotation matrix
     everytimes you want to transform
     """
-    def __init__(self, D, H, W, angleIncrement=10):
+    def __init__(self, D, H, W, angleIncrement=10.0):
         self.D = D
         self.H = H
         self.W = W
@@ -36,19 +36,17 @@ class meshgrid_based_rotation:
         wInd = torch.arange(self.W).to(self.device)
 
         dMesh, wMesh = torch.meshgrid(dInd, wInd)
-
         cosThetas = torch.cos(self.anglesRad)
         sinThetas = torch.sin(self.anglesRad)
         numAngles = self.anglesRad.shape[0]
         self.numAngles = numAngles
         
-        dMesh = dMesh.unsqueeze(0).repeat(numAngles,1,1)
-        wMesh = wMesh.unsqueeze(0).repeat(numAngles,1,1)
+        dMesh = dMesh.unsqueeze(0).repeat(numAngles,1,1).to(torch.float)
+        wMesh = wMesh.unsqueeze(0).repeat(numAngles,1,1).to(torch.float)
 
         cosThetas = cosThetas.view(-1, 1, 1)
         sinThetas = sinThetas.view(-1, 1, 1)
 
-        # We will be rotating along the center.
         self.dRot = cosThetas*dMesh - sinThetas*wMesh - cosThetas*self.centerD + sinThetas*self.centerW + self.centerD #+ self.EPS # [36, 5, 5]
         self.wRot   = sinThetas*dMesh + cosThetas*wMesh - sinThetas*self.centerD - cosThetas*self.centerW + self.centerW #+ self.EPS # [36, 5, 5]
         
@@ -83,22 +81,25 @@ class meshgrid_based_rotation:
         fq22 = tensor[:,:,dceil, wceil]
         fq11 = tensor[:,:,dfloor,wfloor]
         fq21 = tensor[:,:,dfloor,wceil]
-        y1, y2, x1, x2 = dfloor.unsqueeze(0).unsqueeze(0), dceil.unsqueeze(0).unsqueeze(0), wfloor.unsqueeze(0).unsqueeze(0), wceil.unsqueeze(0).unsqueeze(0)
-        y = self.dRot.unsqueeze(0).unsqueeze(0)
-        x = self.wRot.unsqueeze(0).unsqueeze(0)
+        y1, y2, x1, x2 = dfloor.unsqueeze(0).unsqueeze(0).to(torch.float64), dceil.unsqueeze(0).unsqueeze(0).to(torch.float64), wfloor.unsqueeze(0).unsqueeze(0).to(torch.float64), wceil.unsqueeze(0).unsqueeze(0).to(torch.float64)
+        y = self.dRot.unsqueeze(0).unsqueeze(0).to(torch.float64) 
+        x = self.wRot.unsqueeze(0).unsqueeze(0).to(torch.float64)
         numerator = fq11*(x2-x)*(y2-y) + fq21*(x-x1)*(y2-y) + fq12*(x2-x)*(y-y1) + fq22*(x-x1)*(y-y1)
+        st()
         denominator = (x2-x1)*(y2-y1) + self.EPS
         out = numerator/denominator
         return out
 
 
-    def nearestNeighborInterpolation(self, tensor):
-        
+    def nearestNeighborInterpolation(self, tensor):        
         dfloor, dceil, wfloor, wceil = self.getFloorAndCeil()
         out = tensor[:, :, dfloor, wfloor]
         return out
 
     def getFloorAndCeil(self):
+        self.dRot = self.dRot + self.EPS
+        self.wRot = self.wRot + self.EPS
+
         dfloor = torch.floor(self.dRot).long()
         dceil = torch.ceil(self.dRot).long()
         wfloor = torch.floor(self.wRot).long()
