@@ -81,9 +81,9 @@ class meshgrid_based_rotation:
         fq22 = tensor[:,:,dceil, wceil]
         fq11 = tensor[:,:,dfloor,wfloor]
         fq21 = tensor[:,:,dfloor,wceil]
-        y1, y2, x1, x2 = dfloor.unsqueeze(0).unsqueeze(0).to(torch.float64), dceil.unsqueeze(0).unsqueeze(0).to(torch.float64), wfloor.unsqueeze(0).unsqueeze(0).to(torch.float64), wceil.unsqueeze(0).unsqueeze(0).to(torch.float64)
-        y = self.dRot.unsqueeze(0).unsqueeze(0).to(torch.float64) 
-        x = self.wRot.unsqueeze(0).unsqueeze(0).to(torch.float64)
+        y1, y2, x1, x2 = dfloor.unsqueeze(0).unsqueeze(0).to(torch.float32), dceil.unsqueeze(0).unsqueeze(0).to(torch.float32), wfloor.unsqueeze(0).unsqueeze(0).to(torch.float32), wceil.unsqueeze(0).unsqueeze(0).to(torch.float32)
+        y = self.dRot.unsqueeze(0).unsqueeze(0).to(torch.float32) 
+        x = self.wRot.unsqueeze(0).unsqueeze(0).to(torch.float32)
         one = (x2-x )*(y2-y)
         two = (x-x1)*(y2-y)
         three = (x2-x)*(y-y1)

@@ -22,31 +22,40 @@ class VectorQuantization(Function):
             # assuming C,H,W. So probably will need to fix that after shape validation
             # This flatenning only makes sense when embedding_size is C*H*W. 
             # Otherwise we'll have to permute the rotated_inputs probably before flatenning.
+            embedding_size = codebook.size(1)
+            dictionary_size = codebook.size(0)
             codebook_sqr = torch.sum(codebook ** 2, dim=1)
             if object_level:
                 B,_,_,_ = list(inputs.shape)
-                inputs_flatten = inputs.reshape(B,-1)
-                inputs_size = inputs_flatten
-                if False:
-                    st()
-                    rotated_inputs = mbr.rotate2D(inputs.unsqueeze(0)).permute(0, 2, 1, 3, 4) #B,angles,C,H,W
-                    rotated_inputs_flatten = rotated_inputs.view(-1, rotated_inputs.shape[1], embedding_size)
-                    rot_inputs_sqr = torch.sum(rotated_inputs_flatten ** 2, dim=2, keepdim=True)
-                    rot_distances = torch.addmm(codebook_sqr + rot_inputs_sqr, rotated_inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
+                if True:
+                    rotated_inputs = mbr.rotate2D(inputs).permute(0,2,1,3,4)
+                    B,angles,C,H,W = list(rotated_inputs.shape)
+                    C = C*H*W
+                    assert(C==embedding_size)
+                    rot_input = rotated_inputs.reshape(B,angles,-1)
+                    rot_inputs_sqr = torch.sum(rot_input ** 2, dim=2, keepdim=True)
+                    
+                    rot_distances = (rot_inputs_sqr + codebook_sqr - 2 * torch.matmul(rot_input, codebook.t()))                    
+                    
                     dB, dA, dF = rot_distances.shape
-                    _, rot_indices_flatten = torch.min(rot_distances.view(dB, -1))
-                    rot_indices = rot_indices_flatten%dF
-                    rot_indices = rot_indices.view(*inputs_size[:-1])
-                    ctx.mark_non_differentiable(rot_indices)
-                    return rot_indices
+                    rot_distances = rot_distances.view(B, -1)
+                    rotIdxMin = torch.argmin(rot_distances, dim=1).unsqueeze(1)
+                    best_rotations = rotIdxMin//dF # Find the rotation for min distance
+                    best_rotations = best_rotations.squeeze(1)
+                    encoding_indices = rotIdxMin%dF # Find the best index (which will be column in rotAngle-index grid)
+                    encoding_indices = encoding_indices.squeeze(1)
+
+                    ctx.mark_non_differentiable(encoding_indices)
+                    return encoding_indices
                 else:
+                    st()
+                    inputs_flatten = inputs.reshape(B,-1)
                     inputs_sqr = torch.sum(inputs_flatten ** 2, dim=1, keepdim=True)
                     distances = torch.addmm(codebook_sqr + inputs_sqr,inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
                     _, indices_flatten = torch.min(distances, dim=1)
                     ctx.mark_non_differentiable(indices_flatten)
                     return indices_flatten
             else:
-                    embedding_size = codebook.size(1)
                     inputs_size = inputs.size()
                     inputs_flatten = inputs.view(-1, embedding_size) # Seems like input has shape H,W,C. I am 
                     inputs_sqr = torch.sum(inputs_flatten ** 2, dim=1, keepdim=True)

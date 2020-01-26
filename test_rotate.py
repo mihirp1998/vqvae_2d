@@ -6,14 +6,15 @@ import ipdb
 from scipy.misc import imsave
 st = ipdb.set_trace
 img = torch.tensor(cv2.imread('new.jpg')/255.0).permute(2,0,1).unsqueeze(0).cuda()
-img = F.interpolate(img,[100,100])
-mbr = cross_corr.meshgrid_based_rotation(100,100,100, angleIncrement=90.0)
+img = F.interpolate(img,[100,100]).to(torch.float32)
+mbr = cross_corr.meshgrid_based_rotation(100,100,100, angleIncrement=10.0)
 # rotated_inputs = mbr.rotate2D(img,interpolation="nearestNeighbor")
 rotated_inputs = mbr.rotate2D(img,interpolation="bilinear")
+# st()
 
 
 rotated_inputs = rotated_inputs.permute(0,2,1,3,4)
-for index in range(4):
+for index in range(36):
 	rotated_inputs_i = rotated_inputs[0,index]
 	rotated_inputs_i_np = rotated_inputs_i.permute(1,2,0).cpu().numpy()
 	imsave(f"rotated/{index}.png",rotated_inputs_i_np)
