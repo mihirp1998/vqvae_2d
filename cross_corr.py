@@ -74,6 +74,15 @@ class meshgrid_based_rotation:
             out[:, :, :, self.centerD, self.centerW] = tensor.unsqueeze(2)[:, :, :, self.centerD, self.centerW] # set the value of center pixel
         return out
 
+    def rotate2D_pose(self, tensor,pose, interpolation="bilinear"):
+        if interpolation == "nearestNeighbor":
+            assert False
+            out = self.nearestNeighborInterpolation(tensor)
+        else:
+            out = self.bilinearInterpolation_toPose(tensor,pose)
+            # out[:,:,0,:,:] = tensor # 0 degree rotation is original tensor.
+            # out[:, :, :, self.centerD, self.centerW] = tensor.unsqueeze(2)[:, :, :, self.centerD, self.centerW] # set the value of center pixel
+        return out
     
     def bilinearInterpolation(self, tensor):
         dfloor, dceil, wfloor, wceil = self.getFloorAndCeil() # torch.Size([36, 60, 60])
@@ -105,6 +114,47 @@ class meshgrid_based_rotation:
         return out
 
 
+    def get_inverse(self,pose):
+        inverted_poses = (self.numAngles  - pose)%self.numAngles
+        return inverted_poses
+
+
+    def bilinearInterpolation_toPose(self, tensor, pose):
+        rotated_tensors = []
+        for index,tensor_i in enumerate(tensor):
+            tensor_i = tensor_i.unsqueeze(0)
+            pose_i = pose[index:index+1]
+            dRot,wRot,dfloor, dceil, wfloor, wceil = self.getFloorAndCeil_pose(pose_i)
+
+            fq12 = tensor_i[:,:,dceil, wfloor] 
+            fq22 = tensor_i[:,:,dceil, wceil]
+            fq11 = tensor_i[:,:,dfloor,wfloor]
+            fq21 = tensor_i[:,:,dfloor,wceil]
+
+            y1, y2, x1, x2 = dfloor.unsqueeze(0).unsqueeze(0).to(torch.float32), dceil.unsqueeze(0).unsqueeze(0).to(torch.float32), wfloor.unsqueeze(0).unsqueeze(0).to(torch.float32), wceil.unsqueeze(0).unsqueeze(0).to(torch.float32)
+            y = dRot.unsqueeze(0).unsqueeze(0).to(torch.float32)
+            x = wRot.unsqueeze(0).unsqueeze(0).to(torch.float32)
+            # st()
+            one = (x2-x )*(y2-y)
+            two = (x-x1)*(y2-y)
+            three = (x2-x)*(y-y1)
+            four = (x-x1)*(y-y1)
+
+            one[torch.where(one == 0.0)] = 0.25
+            two[torch.where(two == 0.0)] = 0.25
+            three[torch.where(three == 0.0)] = 0.25
+            four[torch.where(four == 0.0)] = 0.25
+
+
+            numerator = fq11*one + fq21*two + fq12*three + fq22*four
+            denominator = (x2-x1)*(y2-y1)
+            
+            denominator[torch.where(denominator == 0.0)] = 1.0
+            out = numerator/denominator
+            rotated_tensors.append(out)
+        rotated_tensors = torch.cat(rotated_tensors, dim=0)
+        return rotated_tensors
+
     def nearestNeighborInterpolation(self, tensor):        
         dfloor, dceil, wfloor, wceil = self.getFloorAndCeil()
         out = tensor[:, :, dfloor, wfloor]
@@ -119,4 +169,18 @@ class meshgrid_based_rotation:
         wfloor = torch.floor(self.wRot).long()
         wceil = torch.ceil(self.wRot).long()
         return dfloor, dceil, wfloor, wceil
+
+    def getFloorAndCeil_pose(self,pose):
+        inverted_pose = self.get_inverse(pose)
+        dRot_temp = self.dRot.clone()
+        wRot_temp = self.wRot.clone()
+
+        dRot = dRot_temp[inverted_pose]
+        wRot = wRot_temp[inverted_pose]
+        dfloor = torch.floor(dRot).long()
+        dceil = torch.ceil(dRot).long()
+        wfloor = torch.floor(wRot).long()
+        wceil = torch.ceil(wRot).long()
+        return dRot, wRot, dfloor, dceil, wfloor, wceil
+
     

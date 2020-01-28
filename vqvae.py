@@ -9,6 +9,7 @@ from datasets import MiniImagenet,Clevr
 import ipdb
 st = ipdb.set_trace
 from tensorboardX import SummaryWriter
+from collections import defaultdict
 import time
 
 def train(data_loader, model, optimizer, args, writer,epoch):    
@@ -38,23 +39,60 @@ def train(data_loader, model, optimizer, args, writer,epoch):
         print("(%s) Iters:[%4d/%4d]; Epochs:[%4d/%4d]; Iter Time:%.3f loss: %.3f" % (args.output_folder,steps,len(data_loader),epoch,args.num_epochs,iter_time_taken,loss))
 
 
+def most_frequent(List): 
+    counter = 0
+    num = List[0] 
+      
+    for i in List: 
+        curr_frequency = List.count(i) 
+        if(curr_frequency> counter): 
+            counter = curr_frequency 
+            num = i 
+    return num
 
 def test(data_loader, model, args, writer):
+    info_dict = defaultdict(lambda:[])
+    step = 0
     with torch.no_grad():
         loss_recons, loss_vq = 0., 0.
-        for images, _ in data_loader:
+        for images, classes in data_loader:
             images = images.to(args.device)
+            step += 1
+            print(step)
             x_tilde, z_e_x, z_q_x = model(images)
+            emb_e = z_q_x
+            classes = classes[0]
+            e_indexes = model.codebook.predict(emb_e)
+            e_indexes = e_indexes.squeeze().cpu().numpy()
+            for index in range(e_indexes.shape[0]):
+                class_val = classes[index]
+                e_i = e_indexes[index]
+                info_dict[str(e_i)].append(class_val)
+            if (step % 50) == 0:
+                scores_dict = {}
+                most_freq_dict = {}
+                scores_list = []
+                for key,item in info_dict.items():
+                    most_freq_word = most_frequent(item)
+                    mismatch = 0 
+                    for i in item:
+                        if i != most_freq_word:
+                            mismatch += 1
+                    precision = float(len(item)- mismatch)/len(item)
+                    scores_dict[key] = precision
+                    most_freq_dict[key] = most_freq_word
+                    scores_list.append(precision)
+                print(np.mean(scores_list))
+                if step == 1000:
+                    st()
+                # st()
+                print("evaluate")
             loss_recons += F.mse_loss(x_tilde, images)
             loss_vq += F.mse_loss(z_q_x, z_e_x)
-
         loss_recons /= len(data_loader)
         loss_vq /= len(data_loader)
-
-    # Logs
     writer.add_scalar('loss/test/reconstruction', loss_recons.item(), args.steps)
     writer.add_scalar('loss/test/quantization', loss_vq.item(), args.steps)
-
     return loss_recons.item(), loss_vq.item()
 
 def generate_samples(images, model, args):
@@ -147,6 +185,7 @@ def main(args):
     model = VectorQuantizedVAE(num_channels, args.hidden_size, args.object_level, args.k).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    st()
     if args.load_model is not "":
         with open(args.load_model, 'rb') as f:
             state_dict = torch.load(f)
@@ -155,24 +194,28 @@ def main(args):
 
     # Generate the samples first once
     reconstruction = generate_samples(fixed_images, model, args)
-    # st()
     grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
     writer.add_image('reconstruction', grid, 0)
 
     best_loss = -1.
     for epoch in range(args.num_epochs):
-        train(train_loader, model, optimizer, args, writer, epoch)
-        loss, _ = test(valid_loader, model, args, writer)
-        reconstruction = generate_samples(fixed_images, model, args)
-        grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
-
-        writer.add_image('reconstruction', grid, epoch + 1)
-
-
-        if (epoch == 0) or (loss < best_loss):
-            best_loss = loss
-            with open('{0}/best.pt'.format(save_filename), 'wb') as f:
-                torch.save(model.state_dict(), f)
+        if not args.test_mode:
+            train(train_loader, model, optimizer, args, writer, epoch)
+            loss, _ = test(valid_loader, model, args, writer)
+            reconstruction = generate_samples(fixed_images, model, args)
+            grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
+            writer.add_image('reconstruction', grid, epoch + 1)
+            if (epoch == 0) or (loss < best_loss):
+                best_loss = loss
+                with open('{0}/best.pt'.format(save_filename), 'wb') as f:
+                    torch.save(model.state_dict(), f)
+            else:
+                print("nothing")
+        else:
+            test(train_loader, model, args, writer)
+            reconstruction = generate_samples(fixed_images, model, args)
+            grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
+            writer.add_image('reconstruction', grid, epoch + 1)
         # with open('{0}/model_{1}.pt'.format(save_filename, epoch + 1), 'wb') as f:
         #     torch.save(model.state_dict(), f)
 
@@ -198,11 +241,13 @@ if __name__ == '__main__':
 
     parser.add_argument('--object-level', type=bool,default=False)
 
+    parser.add_argument('--test-mode', type=bool)
 
     parser.add_argument('--k', type=int, default=512,
         help='number of latent vectors (default: 512)')
 
     # Optimization
+
     parser.add_argument('--batch-size', type=int, default=32,
         help='batch size (default: 32)')
     parser.add_argument('--num-epochs', type=int, default=2000,

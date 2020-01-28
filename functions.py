@@ -44,17 +44,15 @@ class VectorQuantization(Function):
                     best_rotations = best_rotations.squeeze(1)
                     encoding_indices = rotIdxMin%dF # Find the best index (which will be column in rotAngle-index grid)
                     encoding_indices = encoding_indices.squeeze(1)
-
                     ctx.mark_non_differentiable(encoding_indices)
-                    return encoding_indices
+                    return encoding_indices,best_rotations
                 else:
-                    st()
                     inputs_flatten = inputs.reshape(B,-1)
                     inputs_sqr = torch.sum(inputs_flatten ** 2, dim=1, keepdim=True)
                     distances = torch.addmm(codebook_sqr + inputs_sqr,inputs_flatten, codebook.t(), alpha=-2.0, beta=1.0)
                     _, indices_flatten = torch.min(distances, dim=1)
                     ctx.mark_non_differentiable(indices_flatten)
-                    return indices_flatten
+                    return indices_flatten,torch.zeros(1)
             else:
                     inputs_size = inputs.size()
                     inputs_flatten = inputs.view(-1, embedding_size) # Seems like input has shape H,W,C. I am 
@@ -63,7 +61,7 @@ class VectorQuantization(Function):
                     _, indices_flatten = torch.min(distances, dim=1)
                     indices = indices_flatten.view(*inputs_size[:-1])
                     ctx.mark_non_differentiable(indices)
-                    return indices
+                    return indices,torch.zeros(1)
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -75,12 +73,14 @@ class VectorQuantization(Function):
 class VectorQuantizationStraightThrough(Function):
     @staticmethod
     def forward(ctx, inputs, codebook,object_level):
-        indices = vq(inputs, codebook,object_level)
+        indices,rotations_select = vq(inputs, codebook,object_level)
         indices_flatten = indices.view(-1)
         ctx.save_for_backward(indices_flatten, codebook)
         ctx.mark_non_differentiable(indices_flatten)
         codes_flatten = torch.index_select(codebook, dim=0,index=indices_flatten)
         codes = codes_flatten.view_as(inputs)
+        if object_level:
+            codes = mbr.rotate2D_pose(codes,rotations_select).squeeze(2)
         return (codes, indices_flatten)
 
     @staticmethod

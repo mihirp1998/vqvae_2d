@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions import kl_divergence
 import ipdb
+import cross_corr
 st = ipdb.set_trace
 from functions import vq, vq_st
 
@@ -74,11 +75,35 @@ class VQEmbedding(nn.Module):
         self.embedding = nn.Embedding(K, D)
         self.object_level = object_level
         self.embedding.weight.data.uniform_(-1./K, 1./K)
-
+        self.mbr = cross_corr.meshgrid_based_rotation(16,16,16)
     def forward(self, z_e_x):
         z_e_x_ = z_e_x.permute(0, 2, 3, 1).contiguous()
         latents = vq(z_e_x_, self.embedding.weight)
         return latents
+    
+    def predict(self,z_e_x):
+        codebook =  self.embedding.weight
+        embedding_size = codebook.size(1)
+        dictionary_size = codebook.size(0)
+        codebook_sqr = torch.sum(codebook ** 2, dim=1)
+        B,_,_,_ = list(z_e_x.shape)
+        rotated_inputs = self.mbr.rotate2D(z_e_x).permute(0,2,1,3,4)
+        B,angles,C,H,W = list(rotated_inputs.shape)
+        C = C*H*W
+        assert(C==embedding_size)
+        rot_input = rotated_inputs.reshape(B,angles,-1)
+        rot_inputs_sqr = torch.sum(rot_input ** 2, dim=2, keepdim=True)
+        
+        rot_distances = (rot_inputs_sqr + codebook_sqr - 2 * torch.matmul(rot_input, codebook.t()))                    
+        
+        dB, dA, dF = rot_distances.shape
+        rot_distances = rot_distances.view(B, -1)
+        rotIdxMin = torch.argmin(rot_distances, dim=1).unsqueeze(1)
+        best_rotations = rotIdxMin//dF # Find the rotation for min distance
+        best_rotations = best_rotations.squeeze(1)
+        encoding_indices = rotIdxMin%dF # Find the best index (which will be column in rotAngle-index grid)
+        encoding_indices = encoding_indices.squeeze(1)
+        return encoding_indices
 
     def straight_through(self, z_e_x):
         if not self.object_level:

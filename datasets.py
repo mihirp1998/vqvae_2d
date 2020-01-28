@@ -471,7 +471,7 @@ class Clevr(data.Dataset):
         #     label = self.target_transform(label)
         label = 0
         # st()
-        return image, label
+        return image, [classes[0][0]]
 
     def _fit_label_encoding(self):
         _, labels = zip(*self._data)
