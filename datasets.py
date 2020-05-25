@@ -7,6 +7,7 @@ import ipdb
 import numpy as np
 import torch
 import pickle
+import random
 from scipy.misc import imsave
 import cv2
 
@@ -140,7 +141,10 @@ class Clevr(data.Dataset):
         self.image_folder = os.path.join(os.path.expanduser(root), 'images')
         self._data = []
         self.object_level = object_level
-        
+        if "carla" in root:
+            self.carla = True
+        else:
+            self.carla = False
         if train:
             modfile = f"{self.mod_folder}/{mod}t.txt"
         elif valid:
@@ -157,6 +161,12 @@ class Clevr(data.Dataset):
                 filename = filename_i[:-1]
                 filepath = f"{self.mod_folder}/{filename}"
                 self._data.append(filepath)
+        # st()
+        # numbers = list(range(len(self._data)))
+        random.shuffle(self._data)
+
+        
+        # st()
         # self._fit_label_encoding()
     def bbox_rearrange(self,tree,boxes= [],classes=[]):
         for i in range(0, tree.num_children):
@@ -257,7 +267,38 @@ class Clevr(data.Dataset):
     def matmul2(self,mat1, mat2):
         return torch.matmul(mat1, mat2)
 
+    def bbox_rearrange_corners(self,tree,boxes= [],classes=[]):
+        for i in range(0, tree.num_children):
+            updated_tree,boxes,classes = self.bbox_rearrange_corners(tree.children[i],boxes=boxes,classes=classes)
+            tree.children[i] = updated_tree     
+        if tree.function == "describe":
+            boxes.append(tree.bbox_origin)
+            classes.append(tree.word)
+        return tree,boxes,classes
 
+
+    def trees_rearrange_corners(self,trees):
+        updated_trees =[]
+        all_bboxes = []
+        all_scores = []
+        all_classes = []
+        for tree in [trees]:
+            tree,boxes,classes = self.bbox_rearrange_corners(tree,boxes=[],classes=[])
+            boxes = np.stack(boxes)
+            classes = np.stack(classes)
+            N,num  = boxes.shape 
+            assert num == 6
+            scores = np.pad(np.ones([N]),[0,hyp_N-N])
+            boxes = np.pad(boxes,[[0,hyp_N-N],[0,0]])
+            classes = np.pad(classes,[0,hyp_N-N])
+            updated_trees.append(tree)
+            all_classes.append(classes)
+            all_scores.append(scores)
+            all_bboxes.append(boxes)
+        all_bboxes = all_bboxes[0]
+        all_scores = all_scores[0]
+        all_classes = all_classes[0]
+        return all_bboxes,all_scores,all_classes
 
     def convert_box_to_ref_T_obj(self,box3D):
         # turn the box into obj_T_ref (i.e., obj_T_cam)
@@ -416,12 +457,17 @@ class Clevr(data.Dataset):
 
 
     def __getitem__(self, index):
+        # st()
+        random.shuffle(self._data)
         data = pickle.load(open(self._data[index],"rb"))
-        view_to_take = np.random.randint(0,24)
+        if self.carla:
+            view_to_take = np.random.randint(0,17)
+        else:
+            view_to_take = np.random.randint(0,24)
         random_rgb = data['rgb_camXs_raw'][view_to_take][...,:3]
-        camR_T_origin_raw = torch.from_numpy(data["camR_T_origin_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0)
-        pix_T_cams_raw = torch.from_numpy(data["pix_T_cams_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0)
-        origin_T_camXs_raw = torch.from_numpy(data["origin_T_camXs_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0)
+        camR_T_origin_raw = torch.from_numpy(data["camR_T_origin_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
+        pix_T_cams_raw = torch.from_numpy(data["pix_T_cams_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
+        origin_T_camXs_raw = torch.from_numpy(data["origin_T_camXs_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
         if self.object_level:
             __pb = lambda x: self.pack_boxdim(x, hyp_N)
             __ub = lambda x: self.unpack_boxdim(x, hyp_N)            
@@ -443,12 +489,23 @@ class Clevr(data.Dataset):
             tree_file_name = data['tree_seq_filename']
             tree_file_path = f"{self.root}/{tree_file_name}"
             trees = pickle.load(open(tree_file_path,"rb"))
-            gt_boxesR,scores,classes = self.trees_rearrange(trees)
-            gt_boxesR = torch.from_numpy(gt_boxesR)
-            gt_boxesR_end = torch.reshape(gt_boxesR,[hyp_B,hyp_N,2,3])
+            if self.carla:
+                gt_boxes_origin,scores,classes = self.trees_rearrange_corners(trees)
+                gt_boxes_origin = torch.from_numpy(gt_boxes_origin).to(torch.float)
+                
+                gt_boxes_origin_end = torch.reshape(gt_boxes_origin,[hyp_B,hyp_N,2,3])
+                
+                gt_boxes_origin_theta = self.get_alignedboxes2thetaformat(gt_boxes_origin_end)
+                gt_boxes_origin_corners = self.transform_boxes_to_corners(gt_boxes_origin_theta)
+                # st()
+                gt_boxesR_corners = __ub(self.apply_4x4(camR_T_origin_raw[:,0], __pb(gt_boxes_origin_corners)))
+            else:
+                gt_boxesR,scores,classes = self.trees_rearrange(trees)
+                gt_boxesR = torch.from_numpy(gt_boxesR)
+                gt_boxesR_end = torch.reshape(gt_boxesR,[hyp_B,hyp_N,2,3]).float()
 
-            gt_boxesR_theta = self.get_alignedboxes2thetaformat(gt_boxesR_end)
-            gt_boxesR_corners = self.transform_boxes_to_corners(gt_boxesR_theta)
+                gt_boxesR_theta = self.get_alignedboxes2thetaformat(gt_boxesR_end)
+                gt_boxesR_corners = self.transform_boxes_to_corners(gt_boxesR_theta)
 
             gt_boxesX0_corners = __ub(self.apply_4x4(camX0_T_camRs, __pb(gt_boxesR_corners)))
             gt_cornersX0_pix = __ub(self.apply_pix_T_cam(pix_T_cams[:,0], __pb(gt_boxesX0_corners)))
@@ -461,6 +518,7 @@ class Clevr(data.Dataset):
             xmax,ymax = torch.ceil(upper).to(torch.int16)
             object_rgb = random_rgb[ymin:ymax,xmin:xmax]
             random_rgb = cv2.resize(object_rgb,(int(64),int(64)))
+            # st()
         # label = self._label_encoder[label]
         # tree_file = data['tree_seq_filename']
         # tree_file_path = f""
@@ -471,7 +529,7 @@ class Clevr(data.Dataset):
         #     label = self.target_transform(label)
         label = 0
         # st()
-        return image, [classes[0][0]]
+        return image, [classes[0]]
 
     def _fit_label_encoding(self):
         _, labels = zip(*self._data)
@@ -525,10 +583,16 @@ if __name__ == "__main__":
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ]) 
     import socket   
-    if "compute" in socket.gethostname():
-        root_dataset = "/projects/katefgroup/datasets/clevr_veggies/"
-    else:
-        root_dataset = "/media/mihir/dataset/clevr_veggies/"
-    clevr = Clevr(root_dataset,mod="cg",train=True,transform=transform,object_level= True)
+    root_dataset = "/projects/katefgroup/datasets/carla/"
+    # if "compute" in socket.gethostname():
+    #     root_dataset = "/projects/katefgroup/datasets/clevr_veggies/"
+    # else:
+    #     root_dataset = "/media/mihir/dataset/clevr_veggies/"
+    clevr = Clevr(root_dataset,mod="bb",train=True,transform=transform,object_level= True)
+    # st()
+    fixed_images, _ = next(iter(clevr))
+    fixed_images, _ = next(iter(clevr))
+    fixed_images, _ = next(iter(clevr))
+    fixed_images, _ = next(iter(clevr))
     fixed_images, _ = next(iter(clevr))
     print("hello")

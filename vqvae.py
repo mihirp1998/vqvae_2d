@@ -53,6 +53,7 @@ def most_frequent(List):
 def test(data_loader, model, args, writer):
     info_dict = defaultdict(lambda:[])
     step = 0
+    # st()
     with torch.no_grad():
         loss_recons, loss_vq = 0., 0.
         for images, classes in data_loader:
@@ -71,18 +72,23 @@ def test(data_loader, model, args, writer):
             if (step % 50) == 0:
                 scores_dict = {}
                 most_freq_dict = {}
+                total_mismatch = 0
+                total_items = 0
                 scores_list = []
                 for key,item in info_dict.items():
                     most_freq_word = most_frequent(item)
                     mismatch = 0 
                     for i in item:
+                        total_items += 1
                         if i != most_freq_word:
                             mismatch += 1
+                            total_mismatch += 1
                     precision = float(len(item)- mismatch)/len(item)
                     scores_dict[key] = precision
                     most_freq_dict[key] = most_freq_word
                     scores_list.append(precision)
-                print(np.mean(scores_list))
+                # print(np.mean(scores_list))
+                print((float(total_items)- float(total_mismatch))/float(total_items))
                 if step == 1000:
                     st()
                 # st()
@@ -93,6 +99,25 @@ def test(data_loader, model, args, writer):
         loss_vq /= len(data_loader)
     writer.add_scalar('loss/test/reconstruction', loss_recons.item(), args.steps)
     writer.add_scalar('loss/test/quantization', loss_vq.item(), args.steps)
+    return loss_recons.item(), loss_vq.item()
+
+
+def test_old(data_loader, model, args, writer):
+    with torch.no_grad():
+        loss_recons, loss_vq = 0., 0.
+        for images, _ in data_loader:
+            images = images.to(args.device)
+            x_tilde, z_e_x, z_q_x = model(images)
+            loss_recons += F.mse_loss(x_tilde, images)
+            loss_vq += F.mse_loss(z_q_x, z_e_x)
+
+        loss_recons /= len(data_loader)
+        loss_vq /= len(data_loader)
+
+    # Logs
+    writer.add_scalar('loss/test/reconstruction', loss_recons.item(), args.steps)
+    writer.add_scalar('loss/test/quantization', loss_vq.item(), args.steps)
+
     return loss_recons.item(), loss_vq.item()
 
 def generate_samples(images, model, args):
@@ -143,7 +168,7 @@ def main(args):
             dataset_name = "/media/mihir/dataset/clevr_veggies/"
         else:
             dataset_name = "/projects/katefgroup/datasets/clevr_veggies/"
-
+            dataset_name = '/home/mprabhud/dataset/clevr_veggies'
         # Define the train, valid & test datasets
         train_dataset = Clevr(dataset_name,mod = args.modname\
             , train=True, transform=transform,object_level= args.object_level)
@@ -152,6 +177,27 @@ def main(args):
         test_dataset = Clevr(dataset_name,mod = args.modname,\
          test=True, transform=transform,object_level= args.object_level)
         num_channels = 3
+    elif args.dataset == 'carla':
+        transform = transforms.Compose([
+            # transforms.RandomResizedCrop(128),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+        import socket
+        if "Alien" in socket.gethostname():
+            dataset_name = "/media/mihir/dataset/clevr_veggies/"
+        else:
+            dataset_name = '/home/shamitl/datasets/carla'
+            dataset_name = "/projects/katefgroup/datasets/carla/"
+            dataset_name = '/home/mprabhud/dataset/carla'
+        # Define the train, valid & test datasets
+        train_dataset = Clevr(dataset_name,mod = args.modname\
+            , train=True, transform=transform,object_level= args.object_level)
+        valid_dataset = Clevr(dataset_name,mod = args.modname,\
+         valid=True,transform=transform,object_level= args.object_level)
+        test_dataset = Clevr(dataset_name,mod = args.modname,\
+         test=True, transform=transform,object_level= args.object_level)
+        num_channels = 3        
     # elif args.dataset == 'miniimagenet':
     #     transform = transforms.Compose([
     #         transforms.RandomResizedCrop(128),
@@ -185,7 +231,6 @@ def main(args):
     model = VectorQuantizedVAE(num_channels, args.hidden_size, args.object_level, args.k).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    st()
     if args.load_model is not "":
         with open(args.load_model, 'rb') as f:
             state_dict = torch.load(f)
@@ -197,20 +242,25 @@ def main(args):
     grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
     writer.add_image('reconstruction', grid, 0)
 
+    # st()
     best_loss = -1.
     for epoch in range(args.num_epochs):
         if not args.test_mode:
             train(train_loader, model, optimizer, args, writer, epoch)
-            loss, _ = test(valid_loader, model, args, writer)
+            # st()
+            loss, _ = test_old(valid_loader, model, args, writer)
             reconstruction = generate_samples(fixed_images, model, args)
             grid = make_grid(reconstruction.cpu(), nrow=8, range=(-1, 1), normalize=True)
             writer.add_image('reconstruction', grid, epoch + 1)
+            # st()
+            with open('{0}/recent.pt'.format(save_filename), 'wb') as f:
+                torch.save(model.state_dict(), f)
             if (epoch == 0) or (loss < best_loss):
                 best_loss = loss
                 with open('{0}/best.pt'.format(save_filename), 'wb') as f:
                     torch.save(model.state_dict(), f)
-            else:
-                print("nothing")
+            # else:
+            #     print("nothing")
         else:
             test(train_loader, model, args, writer)
             reconstruction = generate_samples(fixed_images, model, args)
@@ -239,9 +289,10 @@ if __name__ == '__main__':
     parser.add_argument('--load-model', type=str, default="",
         help='name of the model to load')
 
-    parser.add_argument('--object-level', type=bool,default=False)
+    parser.add_argument('--object-level', type=bool,default=True)
 
     parser.add_argument('--test-mode', type=bool)
+    parser.add_argument('--use-depth', type=bool)    
 
     parser.add_argument('--k', type=int, default=512,
         help='number of latent vectors (default: 512)')
