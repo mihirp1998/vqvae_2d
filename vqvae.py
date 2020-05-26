@@ -178,11 +178,20 @@ def main(args):
          test=True, transform=transform,object_level= args.object_level)
         num_channels = 3
     elif args.dataset == 'carla':
-        transform = transforms.Compose([
-            # transforms.RandomResizedCrop(128),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
+        if args.use_depth:
+            transform = transforms.Compose([
+                    # transforms.RandomResizedCrop(128),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.5, 0.5, 0.5, 0.5), (0.5, 0.5, 0.5, 0.5))
+                ])            
+            num_channels = 4
+        else:
+            transform = transforms.Compose([
+                # transforms.RandomResizedCrop(128),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
+            num_channels = 3        
         import socket
         if "Alien" in socket.gethostname():
             dataset_name = "/media/mihir/dataset/clevr_veggies/"
@@ -192,12 +201,12 @@ def main(args):
             dataset_name = '/home/mprabhud/dataset/carla'
         # Define the train, valid & test datasets
         train_dataset = Clevr(dataset_name,mod = args.modname\
-            , train=True, transform=transform,object_level= args.object_level)
+            , train=True, transform=transform,object_level= args.object_level,use_depth=args.use_depth)
         valid_dataset = Clevr(dataset_name,mod = args.modname,\
-         valid=True,transform=transform,object_level= args.object_level)
+         valid=True,transform=transform,object_level= args.object_level,use_depth=args.use_depth)
         test_dataset = Clevr(dataset_name,mod = args.modname,\
-         test=True, transform=transform,object_level= args.object_level)
-        num_channels = 3        
+         test=True, transform=transform,object_level= args.object_level,use_depth=args.use_depth)
+        
     # elif args.dataset == 'miniimagenet':
     #     transform = transforms.Compose([
     #         transforms.RandomResizedCrop(128),
@@ -283,7 +292,7 @@ if __name__ == '__main__':
         help='name of the dataset (mnist, fashion-mnist, cifar10, miniimagenet)')
 
     # Latent space
-    parser.add_argument('--hidden-size', type=int, default=32,
+    parser.add_argument('--hidden-size', type=int, default=1024,
         help='size of the latent vectors (default: 256)')
 
     parser.add_argument('--load-model', type=str, default="",
@@ -294,12 +303,12 @@ if __name__ == '__main__':
     parser.add_argument('--test-mode', type=bool)
     parser.add_argument('--use-depth', type=bool)    
 
-    parser.add_argument('--k', type=int, default=512,
+    parser.add_argument('--k', type=int, default=50,
         help='number of latent vectors (default: 512)')
 
     # Optimization
 
-    parser.add_argument('--batch-size', type=int, default=32,
+    parser.add_argument('--batch-size', type=int, default=8,
         help='batch size (default: 32)')
     parser.add_argument('--num-epochs', type=int, default=2000,
         help='number of epochs (default: 2000)')

@@ -132,7 +132,7 @@ class MiniImagenet(data.Dataset):
 
 class Clevr(data.Dataset):
     def __init__(self, root, mod="temp",object_level=False, train=False, valid=False, test=False,
-                 transform=None, target_transform=None, download=False):
+                 transform=None, target_transform=None, download=False,use_depth=False):
         super(Clevr, self).__init__()
         self.root = root
         self.mod_folder = f"{root}/npys"
@@ -141,8 +141,10 @@ class Clevr(data.Dataset):
         self.image_folder = os.path.join(os.path.expanduser(root), 'images')
         self._data = []
         self.object_level = object_level
+        self.use_depth = use_depth
         if "carla" in root:
             self.carla = True
+            self.mod_folder = f"{root}/npy"
         else:
             self.carla = False
         if train:
@@ -370,6 +372,45 @@ class Clevr(data.Dataset):
         corners = __u(corners_)
         return corners
 
+    def create_depth_image(self, pix_T_cam, xyz_cam, H, W):
+        B, N, D = list(xyz_cam.shape)
+        assert(D==3)
+        xy = self.apply_pix_T_cam(pix_T_cam, xyz_cam)
+        z = xyz_cam[:,:,2]
+
+        depth = torch.zeros(B, 1, H, W, dtype=torch.float32, device=torch.device('cpu'))
+        valid = torch.zeros(B, 1, H, W, dtype=torch.float32, device=torch.device('cpu'))
+        for b in range(B):
+            depth[b], valid[b] = self.create_depth_image_single(xy[b], z[b], H, W)
+        return depth, valid
+
+
+    def create_depth_image_single(self,xy, z, H, W):
+        # turn the xy coordinates into image inds
+        xy = torch.round(xy).long()
+        depth = torch.zeros(H*W, dtype=torch.float32, device=torch.device('cpu'))
+        
+        # lidar reports a sphere of measurements
+        # only use the inds that are within the image bounds
+        # also, only use forward-pointing depths (z > 0)
+        valid = (xy[:,0] <= W-1) & (xy[:,1] <= H-1) & (xy[:,0] >= 0) & (xy[:,1] >= 0) & (z[:] > 0)
+
+        # gather these up
+        xy = xy[valid]
+        z = z[valid]
+
+        inds = self.sub2ind(H, W, xy[:,1], xy[:,0]).long()
+        depth[inds] = z
+        valid = (depth > 0.0).float()
+        depth[torch.where(depth == 0.0)] = 100.0
+        depth = torch.reshape(depth, [1, H, W])
+        valid = torch.reshape(valid, [1, H, W])
+        return depth, valid
+
+    def sub2ind(self,height, width, y, x):
+        return y*width + x
+
+
 
     def pack_seqdim(self,tensor, B):
         shapelist = list(tensor.shape)
@@ -466,15 +507,22 @@ class Clevr(data.Dataset):
             view_to_take = np.random.randint(0,24)
         random_rgb = data['rgb_camXs_raw'][view_to_take][...,:3]
         camR_T_origin_raw = torch.from_numpy(data["camR_T_origin_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
-        pix_T_cams_raw = torch.from_numpy(data["pix_T_cams_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
+        pix_T_cams_raw = torch.from_numpy(data["pix_T_cams_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float().float()
         origin_T_camXs_raw = torch.from_numpy(data["origin_T_camXs_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
-        if self.object_level:
-            __pb = lambda x: self.pack_boxdim(x, hyp_N)
-            __ub = lambda x: self.unpack_boxdim(x, hyp_N)            
-            __p = lambda x: self.pack_seqdim(x, hyp_B)
-            __u = lambda x: self.unpack_seqdim(x, hyp_B)
+        __pb = lambda x: self.pack_boxdim(x, hyp_N)
+        __ub = lambda x: self.unpack_boxdim(x, hyp_N)            
+        __p = lambda x: self.pack_seqdim(x, hyp_B)
+        __u = lambda x: self.unpack_seqdim(x, hyp_B)
+        if self.use_depth:
+            xyz_raw = torch.from_numpy(data["xyz_camXs_raw"][view_to_take:view_to_take+1]).unsqueeze(dim=0).float()
+            depth_camXs_, valid_camXs_ = self.create_depth_image(__p(pix_T_cams_raw), __p(xyz_raw), random_rgb.shape[0], random_rgb.shape[1])
+            depth_camXs = __p(depth_camXs_).squeeze(0).unsqueeze(-1).cpu().numpy()
+            random_rgb = np.concatenate([random_rgb, depth_camXs], axis =-1)
+        # st()
 
-            pix_T_cams = pix_T_cams_raw
+        if self.object_level:
+
+            pix_T_cams = pix_T_cams_raw.cpu()
             # cam_T_velos = feed["cam_T_velos"]
             origin_T_camRs = __u(self.safe_inverse(__p(camR_T_origin_raw)))
             origin_T_camXs = origin_T_camXs_raw
@@ -485,12 +533,14 @@ class Clevr(data.Dataset):
             camXs_T_camRs = __u(self.safe_inverse(__p(camRs_T_camXs)))
             camX0_T_camRs = camXs_T_camRs[:,0]
             camR_T_camX0  = self.safe_inverse(camX0_T_camRs)
-
-            tree_file_name = data['tree_seq_filename']
-            tree_file_path = f"{self.root}/{tree_file_name}"
-            trees = pickle.load(open(tree_file_path,"rb"))
             if self.carla:
-                gt_boxes_origin,scores,classes = self.trees_rearrange_corners(trees)
+                # gt_boxes_origin,scores,classes = self.trees_rearrange_corners(trees)
+                gt_boxes_origin = np.pad(np.expand_dims(data['bbox_origin'],axis=0),[[0,hyp_N-1],[0,0]])
+                # st()
+                scores = np.pad(np.array([1.]),[0,hyp_N-1])
+
+                classes = np.pad([data['obj_name']],[0,hyp_N-1])
+
                 gt_boxes_origin = torch.from_numpy(gt_boxes_origin).to(torch.float)
                 
                 gt_boxes_origin_end = torch.reshape(gt_boxes_origin,[hyp_B,hyp_N,2,3])
@@ -500,6 +550,9 @@ class Clevr(data.Dataset):
                 # st()
                 gt_boxesR_corners = __ub(self.apply_4x4(camR_T_origin_raw[:,0], __pb(gt_boxes_origin_corners)))
             else:
+                tree_file_name = data['tree_seq_filename']
+                tree_file_path = f"{self.root}/{tree_file_name}"
+                trees = pickle.load(open(tree_file_path,"rb"))
                 gt_boxesR,scores,classes = self.trees_rearrange(trees)
                 gt_boxesR = torch.from_numpy(gt_boxesR)
                 gt_boxesR_end = torch.reshape(gt_boxesR,[hyp_B,hyp_N,2,3]).float()
@@ -518,6 +571,9 @@ class Clevr(data.Dataset):
             xmax,ymax = torch.ceil(upper).to(torch.int16)
             object_rgb = random_rgb[ymin:ymax,xmin:xmax]
             random_rgb = cv2.resize(object_rgb,(int(64),int(64)))
+            # st()
+            # st()
+            # imsave(f"dump/{index}.png",random_rgb)
             # st()
         # label = self._label_encoder[label]
         # tree_file = data['tree_seq_filename']
@@ -577,22 +633,32 @@ class Clevr(data.Dataset):
         return len(self._data)
 
 if __name__ == "__main__":
-    transform = transforms.Compose([
-        # transforms.RandomResizedCrop(128),        
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ]) 
+    use_depth = True
+    if use_depth:
+        transform = transforms.Compose([
+            # transforms.RandomResizedCrop(128),        
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5, 0.5), (0.5, 0.5, 0.5, 0.5))
+        ]) 
+    else:
+        transform = transforms.Compose([
+            # transforms.RandomResizedCrop(128),        
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])         
     import socket   
     root_dataset = "/projects/katefgroup/datasets/carla/"
+    root_dataset = '/home//mprabhud/dataset/carla/'
     # if "compute" in socket.gethostname():
     #     root_dataset = "/projects/katefgroup/datasets/clevr_veggies/"
     # else:
     #     root_dataset = "/media/mihir/dataset/clevr_veggies/"
-    clevr = Clevr(root_dataset,mod="bb",train=True,transform=transform,object_level= True)
-    # st()
-    fixed_images, _ = next(iter(clevr))
-    fixed_images, _ = next(iter(clevr))
-    fixed_images, _ = next(iter(clevr))
-    fixed_images, _ = next(iter(clevr))
-    fixed_images, _ = next(iter(clevr))
+    clevr = Clevr(root_dataset,mod="mc",train=True,transform=transform,object_level= True,use_depth=use_depth)
+    clevr = iter(clevr)
+    fixed_images, classes = next(clevr)
+    st()
+    fixed_images, _ = next(clevr)
+    fixed_images, _ = next(clevr)
+    fixed_images, _ = next(clevr)
+    fixed_images, _ = next(clevr)
     print("hello")
